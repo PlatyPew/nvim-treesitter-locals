@@ -1,16 +1,9 @@
 # nvim-treesitter-locals
 
-Did I vibe-code this? Yes, I did.
-Am I proud of it? No, I'm not.
-I'm so sorry but I just needed this plugin so badly I had to vibe-code it myself.
-Sorry to all software developers out there, I have failed you.
+LSP-like functionality (rename, goto definition, references, highlight definitions) powered by Treesitter.
 
-LSP-like functionality (rename, goto definition, references, highlight definitions) powered by [treesitter locals](https://github.com/nvim-treesitter/nvim-treesitter/blob/main/CONTRIBUTING.md#locals) — no LSP required.
-
-## Requirements
-
-- Neovim >= 0.10
-- `locals.scm` query files for your language(s) (Neovim ships some built-in; for others, install from [nvim-treesitter](https://github.com/nvim-treesitter/nvim-treesitter))
+This project is a rewrite of [nvim-treesitter-refactor](https://github.com/nvim-treesitter/nvim-treesitter-refactor) which is no longer compatible with nvim-treesitter on the main branch.
+There is no dependencies as it relies on Neovim's built-in treesitter support.
 
 ## Installation
 
@@ -18,14 +11,14 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ```lua
 {
-  'nvim-treesitter/nvim-treesitter-locals',
+  "PlatyPew/nvim-treesitter-locals",
   opts = {
     highlight_definitions = true,
     keymaps = {
-      goto_definition = 'gd',
-      goto_next_usage = '<a-*>',
-      goto_previous_usage = '<a-#>',
-      smart_rename = '<leader>rn',
+      smart_rename = "gnr",
+      goto_definition = "gnd",
+      goto_next_usage = "]]",
+      goto_previous_usage = "[[",
     },
   },
 }
@@ -33,23 +26,21 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 
 ## Setup Options
 
-| Option                  | Type    | Default | Description                                   |
-| ----------------------- | ------- | ------- | --------------------------------------------- |
+| Option                  | Type    | Default | Description                                     |
+| ----------------------- | ------- | ------- | ----------------------------------------------- |
 | `highlight_definitions` | boolean | `false` | Auto-highlight definitions/usages on CursorHold |
-| `keymaps`               | table   | `{}`    | Keybinding table (see below)                  |
+| `keymaps`               | table   | `{}`    | Keybinding table (see below)                    |
 
 ### Available Keymaps
 
-| Key                    | Description                                  |
-| ---------------------- | -------------------------------------------- |
-| `goto_definition`      | Go to definition (LSP → treesitter fallback) |
-| `goto_definition_ts`   | Go to definition (treesitter only)           |
-| `goto_next_usage`      | Next usage (wraps around)                    |
-| `goto_previous_usage`  | Previous usage (wraps around)                |
-| `smart_rename`         | Rename symbol (LSP → treesitter fallback)    |
-| `smart_rename_ts`      | Rename symbol (treesitter only)              |
-
-Keymaps are set as buffer-local mappings on every buffer with a treesitter parser. They are applied via `vim.schedule()` inside a `FileType` autocmd, which means they run **after** ftplugin scripts — this fixes `]]`/`[[` (and similar keys) being overridden by built-in ftplugins like `ftplugin/python.vim`.
+| Key                   | Description                                  |
+| --------------------- | -------------------------------------------- |
+| `goto_definition`     | Go to definition (LSP → treesitter fallback) |
+| `goto_definition_ts`  | Go to definition (treesitter only)           |
+| `goto_next_usage`     | Next usage (wraps around)                    |
+| `goto_previous_usage` | Previous usage (wraps around)                |
+| `smart_rename`        | Rename symbol (LSP → treesitter fallback)    |
+| `smart_rename_ts`     | Rename symbol (treesitter only)              |
 
 ## Features
 
@@ -96,9 +87,9 @@ require('nvim-treesitter-locals.highlight').enable(bufnr)
 | `TSDefinition`      | `Search`    | The definition node |
 | `TSDefinitionUsage` | `CurSearch` | Usage nodes         |
 
-## Design
+## Misc
 
-- Zero dependencies — uses only Neovim built-in treesitter APIs
-- No setup function required
-- No default keybinds
-- Single function per feature
+Did I vibe-code this? Yes, I did.
+Am I proud of it? No, I'm not.
+I'm so sorry but I just needed this plugin so badly I had to vibe-code it myself.
+Sorry to all software developers out there, I have failed you.
