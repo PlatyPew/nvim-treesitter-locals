@@ -19,29 +19,50 @@ Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 ```lua
 {
   'nvim-treesitter/nvim-treesitter-locals',
+  opts = {
+    highlight_definitions = true,
+    keymaps = {
+      goto_definition = 'gd',
+      goto_next_usage = '<a-*>',
+      goto_previous_usage = '<a-#>',
+      smart_rename = '<leader>rn',
+    },
+  },
 }
 ```
 
+## Setup Options
+
+| Option                  | Type    | Default | Description                                   |
+| ----------------------- | ------- | ------- | --------------------------------------------- |
+| `highlight_definitions` | boolean | `false` | Auto-highlight definitions/usages on CursorHold |
+| `keymaps`               | table   | `{}`    | Keybinding table (see below)                  |
+
+### Available Keymaps
+
+| Key                    | Description                                  |
+| ---------------------- | -------------------------------------------- |
+| `goto_definition`      | Go to definition (LSP → treesitter fallback) |
+| `goto_definition_ts`   | Go to definition (treesitter only)           |
+| `goto_next_usage`      | Next usage (wraps around)                    |
+| `goto_previous_usage`  | Previous usage (wraps around)                |
+| `smart_rename`         | Rename symbol (LSP → treesitter fallback)    |
+| `smart_rename_ts`      | Rename symbol (treesitter only)              |
+
+Keymaps are set as buffer-local mappings on every buffer with a treesitter parser. They are applied via `vim.schedule()` inside a `FileType` autocmd, which means they run **after** ftplugin scripts — this fixes `]]`/`[[` (and similar keys) being overridden by built-in ftplugins like `ftplugin/python.vim`.
+
 ## Features
 
-No setup function required. No default keybinds. All features are plain Lua functions you call directly.
+All features are also available as plain Lua functions you can call directly, without using `setup()`.
 
 Functions with LSP equivalents (`goto_definition`, `smart_rename`) automatically use LSP when a capable server is attached, falling back to treesitter. `_ts()` variants are available to bypass LSP.
 
 ### Highlight Definitions
 
-Highlights the definition and all usages of the symbol under the cursor on `CursorHold`. Opt-in per buffer.
+Highlights the definition and all usages of the symbol under the cursor on `CursorHold`. When using `setup()`, set `highlight_definitions = true`. Otherwise, enable manually per buffer:
 
 ```lua
--- Enable for all buffers with a treesitter parser
-vim.api.nvim_create_autocmd('FileType', {
-  callback = function(args)
-    local ok = pcall(vim.treesitter.get_parser, args.buf)
-    if ok then
-      require('nvim-treesitter-locals.highlight').enable(args.buf)
-    end
-  end,
-})
+require('nvim-treesitter-locals.highlight').enable(bufnr)
 ```
 
 | Function                                  | Description                        |
@@ -54,13 +75,6 @@ vim.api.nvim_create_autocmd('FileType', {
 
 ### Navigation
 
-```lua
-local nav = require('nvim-treesitter-locals.navigation')
-vim.keymap.set('n', 'gd', nav.goto_definition, { desc = 'Go to definition' })
-vim.keymap.set('n', '<a-*>', nav.goto_next_usage, { desc = 'Next usage' })
-vim.keymap.set('n', '<a-#>', nav.goto_previous_usage, { desc = 'Previous usage' })
-```
-
 | Function                                 | Description                                  |
 | ---------------------------------------- | -------------------------------------------- |
 | `navigation.goto_definition(bufnr?)`     | Go to definition (LSP → treesitter fallback) |
@@ -69,11 +83,6 @@ vim.keymap.set('n', '<a-#>', nav.goto_previous_usage, { desc = 'Previous usage' 
 | `navigation.goto_previous_usage(bufnr?)` | Previous usage (wraps around)                |
 
 ### Smart Rename
-
-```lua
-local rename = require('nvim-treesitter-locals.rename')
-vim.keymap.set('n', '<leader>rn', rename.smart_rename, { desc = 'Smart rename' })
-```
 
 | Function                         | Description                               |
 | -------------------------------- | ----------------------------------------- |
