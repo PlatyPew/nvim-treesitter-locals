@@ -1,0 +1,176 @@
+*nvim-treesitter-locals.txt*  Treesitter-based locals for Neovim
+
+==============================================================================
+CONTENTS                                      *nvim-treesitter-locals-contents*
+
+  1. Introduction ........................ |nvim-treesitter-locals-introduction|
+  2. Requirements ........................ |nvim-treesitter-locals-requirements|
+  3. Installation ........................ |nvim-treesitter-locals-installation|
+  4. Highlight ........................... |nvim-treesitter-locals-highlight|
+  5. Navigation .......................... |nvim-treesitter-locals-navigation|
+  6. Rename .............................. |nvim-treesitter-locals-rename|
+  7. Highlight Groups .................... |nvim-treesitter-locals-hl-groups|
+
+==============================================================================
+1. Introduction                           *nvim-treesitter-locals-introduction*
+
+nvim-treesitter-locals provides LSP-like functionality powered by treesitter
+locals queries. It works without any LSP server, using only Neovim's built-in
+treesitter support.
+
+Features:
+- Highlight definitions and usages of the symbol under the cursor
+- Go to definition
+- Navigate between usages (next/previous)
+- Smart rename (all references in scope)
+
+All features with LSP equivalents (goto definition, rename) will
+automatically use LSP when a capable server is attached, falling back to
+treesitter otherwise. Treesitter-only variants are also available if you
+prefer to bypass LSP.
+
+No default keybinds are set. No setup function is required.
+
+==============================================================================
+2. Requirements                           *nvim-treesitter-locals-requirements*
+
+- Neovim >= 0.10
+- `locals.scm` query files for your language(s)
+
+Neovim ships `locals.scm` for some built-in languages. For additional
+languages, you can install query files from the nvim-treesitter queries
+repository or write your own.
+
+Query files should define these captures:
+- `@local.definition.*` - where symbols are defined
+- `@local.reference` - where symbols are used
+- `@local.scope` - scope boundaries (functions, blocks, etc.)
+
+==============================================================================
+3. Installation                           *nvim-treesitter-locals-installation*
+
+Using lazy.nvim: >lua
+  {
+    'nvim-treesitter/nvim-treesitter-locals',
+  }
+<
+
+Using vim-plug: >vim
+  Plug 'nvim-treesitter/nvim-treesitter-locals'
+<
+
+==============================================================================
+4. Highlight                                 *nvim-treesitter-locals-highlight*
+
+Highlight the definition and all usages of the symbol under the cursor.
+This feature is opt-in: you must explicitly enable it.
+
+Functions:
+
+                                *nvim-treesitter-locals.highlight.enable()*
+`require('nvim-treesitter-locals.highlight').enable({bufnr})`
+  Enable automatic highlighting for {bufnr} (default: current buffer).
+  Sets up `CursorHold` to highlight and `CursorMoved`/`InsertEnter` to clear.
+
+                                *nvim-treesitter-locals.highlight.disable()*
+`require('nvim-treesitter-locals.highlight').disable({bufnr})`
+  Disable automatic highlighting for {bufnr} and clear any active highlights.
+
+                                *nvim-treesitter-locals.highlight.toggle()*
+`require('nvim-treesitter-locals.highlight').toggle({bufnr})`
+  Toggle automatic highlighting for {bufnr}.
+
+                        *nvim-treesitter-locals.highlight.highlight_definitions()*
+`require('nvim-treesitter-locals.highlight').highlight_definitions({bufnr})`
+  Manually trigger highlighting for the symbol under the cursor.
+
+                        *nvim-treesitter-locals.highlight.clear_highlights()*
+`require('nvim-treesitter-locals.highlight').clear_highlights({bufnr})`
+  Clear all definition/usage highlights.
+
+Example: Enable for all buffers with a treesitter parser: >lua
+  vim.api.nvim_create_autocmd('FileType', {
+    callback = function(args)
+      local ok = pcall(vim.treesitter.get_parser, args.buf)
+      if ok then
+        require('nvim-treesitter-locals.highlight').enable(args.buf)
+      end
+    end,
+  })
+<
+
+==============================================================================
+5. Navigation                               *nvim-treesitter-locals-navigation*
+
+Navigate to definitions and between usages of symbols.
+
+Functions:
+
+                        *nvim-treesitter-locals.navigation.goto_definition()*
+`require('nvim-treesitter-locals.navigation').goto_definition({bufnr})`
+  Go to the definition of the symbol under the cursor.
+  Uses LSP `textDocument/definition` if a capable server is attached,
+  otherwise falls back to treesitter.
+
+                        *nvim-treesitter-locals.navigation.goto_definition_ts()*
+`require('nvim-treesitter-locals.navigation').goto_definition_ts({bufnr})`
+  Go to the definition using treesitter only (bypasses LSP).
+
+                        *nvim-treesitter-locals.navigation.goto_next_usage()*
+`require('nvim-treesitter-locals.navigation').goto_next_usage({bufnr})`
+  Jump to the next usage of the symbol under the cursor.
+  Wraps around to the first usage after the last.
+
+                        *nvim-treesitter-locals.navigation.goto_previous_usage()*
+`require('nvim-treesitter-locals.navigation').goto_previous_usage({bufnr})`
+  Jump to the previous usage of the symbol under the cursor.
+  Wraps around to the last usage before the first.
+
+Example keybinds: >lua
+  local nav = require('nvim-treesitter-locals.navigation')
+  vim.keymap.set('n', 'gd', nav.goto_definition, { desc = 'Go to definition' })
+  vim.keymap.set('n', '<a-*>', nav.goto_next_usage, { desc = 'Next usage' })
+  vim.keymap.set('n', '<a-#>', nav.goto_previous_usage, { desc = 'Previous usage' })
+<
+
+==============================================================================
+6. Rename                                       *nvim-treesitter-locals-rename*
+
+Rename the symbol under the cursor and all its references within scope.
+
+Functions:
+
+                        *nvim-treesitter-locals.rename.smart_rename()*
+`require('nvim-treesitter-locals.rename').smart_rename({bufnr})`
+  Rename the symbol under the cursor.
+  Uses LSP `textDocument/rename` if a capable server is attached,
+  otherwise falls back to treesitter.
+
+                        *nvim-treesitter-locals.rename.smart_rename_ts()*
+`require('nvim-treesitter-locals.rename').smart_rename_ts({bufnr})`
+  Rename using treesitter only (bypasses LSP).
+
+Example keybind: >lua
+  local rename = require('nvim-treesitter-locals.rename')
+  vim.keymap.set('n', '<leader>rn', rename.smart_rename, { desc = 'Smart rename' })
+<
+
+==============================================================================
+7. Highlight Groups                           *nvim-treesitter-locals-hl-groups*
+
+The following highlight groups are defined with default links. Override them
+in your colorscheme or config to customize appearance.
+
+  *TSDefinition*          Highlight for the definition node.
+                        Default: links to `Search`
+
+  *TSDefinitionUsage*     Highlight for usage nodes.
+                        Default: links to `CurSearch`
+
+Example override: >lua
+  vim.api.nvim_set_hl(0, 'TSDefinition', { underline = true })
+  vim.api.nvim_set_hl(0, 'TSDefinitionUsage', { bold = true })
+<
+
+==============================================================================
+vim:tw=78:ts=8:ft=help:norl:
