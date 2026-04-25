@@ -240,13 +240,17 @@ M.get_definitions_lookup_table = memoize(function(bufnr)
   local result = {} ---@type TSLocal[]
   for _, definition in ipairs(definitions) do
     for _, node_entry in ipairs(M.get_local_nodes(definition)) do
-      local scopes = M.get_definition_scopes(node_entry.node, bufnr, node_entry.scope)
-      -- Always use the highest valid scope
-      local scope = scopes[#scopes]
       local node_text = ts.get_node_text(node_entry.node, bufnr)
-      local id = M.get_definition_id(scope, node_text)
-
-      result[id] = node_entry
+      -- Register definition at every ancestor scope so it's findable from
+      -- any enclosing scope. find_definition searches inner-to-outer, so
+      -- shadowing still works: inner definitions claim inner scopes first
+      -- (tree-order processing), and lookup stops at the first match.
+      for scope in M.iter_scope_tree(node_entry.node, bufnr) do
+        local id = M.get_definition_id(scope, node_text)
+        if not result[id] then
+          result[id] = node_entry
+        end
+      end
     end
   end
 

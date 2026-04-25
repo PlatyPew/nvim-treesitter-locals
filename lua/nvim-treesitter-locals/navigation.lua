@@ -194,6 +194,14 @@ local function get_usage_list(bufnr)
     return
   end
 
+  -- For file-scope definitions (functions, macros, types), widen the search
+  -- scope to the file root so usages across all functions are found.
+  -- Without this, cursor on a function definition only finds usages within
+  -- that function's own scope, missing call sites in other functions.
+  if kind:match('%.function$') or kind:match('%.macro$') or kind:match('%.type$') then
+    scope = node:tree():root()
+  end
+
   local usages = locals.find_usages(def_node, scope, bufnr)
 
   -- Build combined list: definition + usages, deduplicated
