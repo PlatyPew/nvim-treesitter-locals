@@ -34,31 +34,45 @@ local function goto_file_location(loc)
   api.nvim_win_set_cursor(0, { loc.row + 1, loc.col })
 end
 
---- Show a picker when multiple cross-file results exist.
+--- Read a specific line from a file (1-based).
+---@param filepath string
+---@param lnum integer 1-based line number
+---@return string?
+local function read_line(filepath, lnum)
+  local lines = vim.fn.readfile(filepath, '', lnum)
+  if lines and #lines >= lnum then
+    return lines[lnum]
+  end
+  return nil
+end
+
+--- Show cross-file results in Snacks.picker.
 ---@param results ExternalDefinition[]
 ---@param title string
 local function show_location_picker(results, title)
-  vim.ui.select(results, {
-    prompt = title .. ' (' .. #results .. ' results)',
-    format_item = function(item)
-      local short_kind = item.kind:gsub('local%.definition%.?', '')
-      if short_kind == '' then
-        short_kind = 'def'
-      end
-      return string.format(
-        '%s [%s] %s:%d:%d',
-        item.name,
-        short_kind,
-        vim.fn.fnamemodify(item.file, ':~:.'),
-        item.row + 1,
-        item.col + 1
-      )
-    end,
-  }, function(choice)
-    if choice then
-      goto_file_location(choice)
+  local items = {} ---@type snacks.picker.finder.Item[]
+  for _, r in ipairs(results) do
+    local line_text = read_line(r.file, r.row + 1)
+    local short_kind = r.kind:gsub('local%.definition%.?', '')
+    if short_kind == '' then
+      short_kind = 'def'
     end
-  end)
+    items[#items + 1] = {
+      text = r.name .. ' ' .. r.file,
+      file = r.file,
+      pos = { r.row + 1, r.col },
+      end_pos = { r.end_row + 1, r.end_col },
+      line = line_text and vim.trim(line_text) or '',
+      label = short_kind,
+    }
+  end
+
+  Snacks.picker({
+    title = title,
+    items = items,
+    format = 'file',
+    preview = 'file',
+  })
 end
 
 --- Resolve cross-file config into root, lang, file_patterns for the index.
@@ -109,11 +123,7 @@ local function try_cross_file_definition(symbol_name, bufnr)
     return false
   end
 
-  if #results == 1 then
-    goto_file_location(results[1])
-  else
-    show_location_picker(results, 'Definition')
-  end
+  show_location_picker(results, 'Definition: ' .. symbol_name)
   return true
 end
 
