@@ -17,7 +17,6 @@ local M = {}
 ---@field goto_previous_usage? string|false Previous usage (wraps around)
 ---@field smart_rename? string|false Rename symbol (LSP -> treesitter fallback)
 ---@field smart_rename_ts? string|false Rename symbol (treesitter only)
----@field goto_definition_xref? string|false Go to cross-file definition
 ---@field find_references_xref? string|false Find cross-file references
 
 ---@type NvimTreesitterLocalsOpts
@@ -64,12 +63,6 @@ local keymap_actions = {
     module = 'nvim-treesitter-locals.rename',
     fn = 'smart_rename_ts',
     desc = 'Smart rename (treesitter)',
-    mode = 'n',
-  },
-  goto_definition_xref = {
-    module = 'nvim-treesitter-locals.navigation',
-    fn = 'goto_definition_xref',
-    desc = 'Go to definition (cross-file)',
     mode = 'n',
   },
   find_references_xref = {

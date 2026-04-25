@@ -27,13 +27,6 @@ local function goto_node(node, bufnr)
   api.nvim_set_current_buf(bufnr)
 end
 
---- Jump to a location in an external file.
----@param loc ExternalDefinition
-local function goto_file_location(loc)
-  vim.cmd('edit ' .. vim.fn.fnameescape(loc.file))
-  api.nvim_win_set_cursor(0, { loc.row + 1, loc.col })
-end
-
 --- Read a specific line from a file (1-based).
 ---@param filepath string
 ---@param lnum integer 1-based line number
@@ -102,31 +95,6 @@ local function resolve_xref_config(bufnr)
   return root, lang, file_patterns
 end
 
---- Try cross-file definition lookup for a symbol.
---- Returns true if handled (found results or notified user), false if cross_file disabled.
----@param symbol_name string
----@param bufnr integer
----@return boolean handled
-local function try_cross_file_definition(symbol_name, bufnr)
-  local root, lang, file_patterns = resolve_xref_config(bufnr)
-  if not root then
-    return false
-  end
-
-  local index = require('nvim-treesitter-locals.index')
-  local current_file = vim.fn.resolve(vim.api.nvim_buf_get_name(bufnr))
-
-  index.ensure_index(root, lang, file_patterns)
-  local results = index.lookup(root, symbol_name, current_file)
-
-  if #results == 0 then
-    return false
-  end
-
-  show_location_picker(results, 'Definition: ' .. symbol_name)
-  return true
-end
-
 --- Go to the definition of the symbol under the cursor (treesitter only, local buffer).
 ---@param bufnr? integer
 function M.goto_definition_ts(bufnr)
@@ -147,13 +115,13 @@ end
 
 --- Go to the definition of the symbol under the cursor.
 --- Uses LSP if available and returns results, falls back to treesitter.
+--- When cross_file is enabled, collects both local and cross-file definitions
+--- and shows them in a Snacks.picker. Otherwise, jumps directly to the local definition.
 ---@param bufnr? integer
 function M.goto_definition(bufnr)
   bufnr = bufnr or api.nvim_get_current_buf()
 
   if lsp_supports(bufnr, 'textDocument/definition') then
-    -- Probe LSP synchronously to check if it actually finds a definition.
-    -- If empty, fall through to treesitter instead of silently failing.
     local params = vim.lsp.util.make_position_params()
     local lsp_results = vim.lsp.buf_request_sync(bufnr, 'textDocument/definition', params, 1000)
     if lsp_results then
@@ -166,14 +134,6 @@ function M.goto_definition(bufnr)
     end
   end
 
-  M.goto_definition_ts(bufnr)
-end
-
---- Go to definition searching only across project files (skips local buffer).
----@param bufnr? integer
-function M.goto_definition_xref(bufnr)
-  bufnr = bufnr or api.nvim_get_current_buf()
-
   local node = ts.get_node()
   if not node then
     return
@@ -184,8 +144,45 @@ function M.goto_definition_xref(bufnr)
     return
   end
 
-  if not try_cross_file_definition(node_text, bufnr) then
-    vim.notify('nvim-treesitter-locals: no cross-file definition found', vim.log.levels.INFO)
+  -- Local definition
+  local def_node, _, kind = locals.find_definition(node, bufnr)
+
+  -- Cross-file definitions
+  local xref_results = {}
+  local root, lang, file_patterns = resolve_xref_config(bufnr)
+  if root then
+    local index = require('nvim-treesitter-locals.index')
+    local current_file = vim.fn.resolve(api.nvim_buf_get_name(bufnr))
+    index.ensure_index(root, lang, file_patterns)
+    xref_results = index.lookup(root, node_text, current_file)
+  end
+
+  -- Cross-file results exist: show picker with local + cross-file defs
+  if #xref_results > 0 then
+    local all_results = {} ---@type ExternalDefinition[]
+
+    if kind then
+      local sr, sc, er, ec = def_node:range()
+      local current_file = vim.fn.resolve(api.nvim_buf_get_name(bufnr))
+      all_results[#all_results + 1] = {
+        name = node_text,
+        kind = kind,
+        file = current_file,
+        row = sr,
+        col = sc,
+        end_row = er,
+        end_col = ec,
+      }
+    end
+
+    vim.list_extend(all_results, xref_results)
+    show_location_picker(all_results, 'Definition: ' .. node_text)
+    return
+  end
+
+  -- No cross-file results: jump to local definition directly
+  if kind then
+    goto_node(def_node, bufnr)
   end
 end
 
