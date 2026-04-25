@@ -136,14 +136,24 @@ function M.goto_definition_ts(bufnr)
 end
 
 --- Go to the definition of the symbol under the cursor.
---- Uses LSP if available, falls back to treesitter.
+--- Uses LSP if available and returns results, falls back to treesitter.
 ---@param bufnr? integer
 function M.goto_definition(bufnr)
   bufnr = bufnr or api.nvim_get_current_buf()
 
   if lsp_supports(bufnr, 'textDocument/definition') then
-    vim.lsp.buf.definition()
-    return
+    -- Probe LSP synchronously to check if it actually finds a definition.
+    -- If empty, fall through to treesitter instead of silently failing.
+    local params = vim.lsp.util.make_position_params()
+    local lsp_results = vim.lsp.buf_request_sync(bufnr, 'textDocument/definition', params, 1000)
+    if lsp_results then
+      for _, res in pairs(lsp_results) do
+        if res.result and not vim.tbl_isempty(res.result) then
+          vim.lsp.buf.definition()
+          return
+        end
+      end
+    end
   end
 
   M.goto_definition_ts(bufnr)
