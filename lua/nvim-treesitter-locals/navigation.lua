@@ -27,7 +27,67 @@ local function goto_node(node, bufnr)
   api.nvim_set_current_buf(bufnr)
 end
 
---- Go to the definition of the symbol under the cursor (treesitter only).
+--- Jump to a location in an external file.
+---@param loc ExternalDefinition
+local function goto_file_location(loc)
+  vim.cmd('edit ' .. vim.fn.fnameescape(loc.file))
+  api.nvim_win_set_cursor(0, { loc.row + 1, loc.col })
+end
+
+--- Show a picker when multiple cross-file results exist.
+---@param results ExternalDefinition[]
+---@param title string
+local function show_location_picker(results, title)
+  vim.ui.select(results, {
+    prompt = title .. ' (' .. #results .. ' results)',
+    format_item = function(item)
+      local short_kind = item.kind:gsub('local%.definition%.?', '')
+      if short_kind == '' then
+        short_kind = 'def'
+      end
+      return string.format(
+        '%s [%s] %s:%d:%d',
+        item.name,
+        short_kind,
+        vim.fn.fnamemodify(item.file, ':~:.'),
+        item.row + 1,
+        item.col + 1
+      )
+    end,
+  }, function(choice)
+    if choice then
+      goto_file_location(choice)
+    end
+  end)
+end
+
+--- Try cross-file definition lookup for a symbol.
+--- Returns true if handled (found results or notified user), false if cross_file disabled.
+---@param symbol_name string
+---@param bufnr integer
+---@return boolean handled
+local function try_cross_file_definition(symbol_name, bufnr)
+  local config = require('nvim-treesitter-locals').get_config()
+  if not config.cross_file then
+    return false
+  end
+
+  local index = require('nvim-treesitter-locals.index')
+  local results = index.find_external_definition(symbol_name, bufnr, config.cross_file)
+
+  if #results == 0 then
+    return false
+  end
+
+  if #results == 1 then
+    goto_file_location(results[1])
+  else
+    show_location_picker(results, 'Definition')
+  end
+  return true
+end
+
+--- Go to the definition of the symbol under the cursor (treesitter only, local buffer).
 ---@param bufnr? integer
 function M.goto_definition_ts(bufnr)
   bufnr = bufnr or api.nvim_get_current_buf()
@@ -57,6 +117,26 @@ function M.goto_definition(bufnr)
   end
 
   M.goto_definition_ts(bufnr)
+end
+
+--- Go to definition searching only across project files (skips local buffer).
+---@param bufnr? integer
+function M.goto_definition_xref(bufnr)
+  bufnr = bufnr or api.nvim_get_current_buf()
+
+  local node = ts.get_node()
+  if not node then
+    return
+  end
+
+  local node_text = ts.get_node_text(node, bufnr)
+  if not node_text or #node_text == 0 then
+    return
+  end
+
+  if not try_cross_file_definition(node_text, bufnr) then
+    vim.notify('nvim-treesitter-locals: no cross-file definition found', vim.log.levels.INFO)
+  end
 end
 
 --- Collect definition + usages sorted by position, and find the current index.
