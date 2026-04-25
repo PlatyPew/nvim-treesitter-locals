@@ -61,19 +61,49 @@ local function show_location_picker(results, title)
   end)
 end
 
+--- Resolve cross-file config into root, lang, file_patterns for the index.
+---@param bufnr integer
+---@return string? root
+---@return string? lang
+---@return string[]? file_patterns
+local function resolve_xref_config(bufnr)
+  local config = require('nvim-treesitter-locals').get_config()
+  if not config.cross_file then
+    return nil, nil, nil
+  end
+
+  local opts = type(config.cross_file) == 'table' and config.cross_file or {}
+  local ft = vim.bo[bufnr].filetype
+  local lang = opts.lang or ts.language.get_lang(ft) or ft
+
+  local index = require('nvim-treesitter-locals.index')
+  local file_patterns = opts.file_patterns or index.lang_patterns[lang]
+  if not file_patterns then
+    return nil, nil, nil
+  end
+
+  local project = require('nvim-treesitter-locals.project')
+  local root = project.find_root(bufnr, opts.root_markers)
+
+  return root, lang, file_patterns
+end
+
 --- Try cross-file definition lookup for a symbol.
 --- Returns true if handled (found results or notified user), false if cross_file disabled.
 ---@param symbol_name string
 ---@param bufnr integer
 ---@return boolean handled
 local function try_cross_file_definition(symbol_name, bufnr)
-  local config = require('nvim-treesitter-locals').get_config()
-  if not config.cross_file then
+  local root, lang, file_patterns = resolve_xref_config(bufnr)
+  if not root then
     return false
   end
 
   local index = require('nvim-treesitter-locals.index')
-  local results = index.find_external_definition(symbol_name, bufnr, config.cross_file)
+  local current_file = vim.fn.resolve(vim.api.nvim_buf_get_name(bufnr))
+
+  index.ensure_index(root, lang, file_patterns)
+  local results = index.lookup(root, symbol_name, current_file)
 
   if #results == 0 then
     return false

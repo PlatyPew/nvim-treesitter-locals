@@ -2,13 +2,13 @@ local M = {}
 
 ---@class NvimTreesitterLocalsCrossFileOpts
 ---@field root_markers? string[] Project root markers (default: {".git", "Makefile", "compile_commands.json"})
----@field file_patterns? string[] File patterns to scan (default: {"*.c", "*.h"})
+---@field file_patterns? string[] File patterns to scan (default: auto-detect from language)
 ---@field lang? string Treesitter language override (default: auto-detect from filetype)
 
 ---@class NvimTreesitterLocalsOpts
 ---@field highlight_definitions? boolean Enable auto-highlight on CursorHold for all treesitter buffers (default: false)
 ---@field keymaps? NvimTreesitterLocalsKeymaps Keybindings (set to false to disable a default, or string to override)
----@field cross_file? NvimTreesitterLocalsCrossFileOpts|false Enable cross-file features (default: false)
+---@field cross_file? NvimTreesitterLocalsCrossFileOpts|boolean Enable cross-file features (default: false). Set true for auto-detect.
 
 ---@class NvimTreesitterLocalsKeymaps
 ---@field goto_definition? string|false Go to definition (LSP -> treesitter fallback)
@@ -127,6 +127,30 @@ function M.setup(opts)
         end
       end,
     })
+  end
+
+  -- Cross-file index commands (only when cross_file enabled)
+  if opts.cross_file then
+    vim.api.nvim_create_user_command('TSLocalsIndexRebuild', function()
+      local buf = vim.api.nvim_get_current_buf()
+      local cf = type(opts.cross_file) == 'table' and opts.cross_file or {}
+      local ft = vim.bo[buf].filetype
+      local lang = cf.lang or vim.treesitter.language.get_lang(ft) or ft
+      local index = require('nvim-treesitter-locals.index')
+      local file_patterns = cf.file_patterns or index.lang_patterns[lang]
+      if not file_patterns then
+        vim.notify('nvim-treesitter-locals: no file patterns for language: ' .. lang, vim.log.levels.WARN)
+        return
+      end
+      local root = require('nvim-treesitter-locals.project').find_root(buf, cf.root_markers)
+      index.rebuild(root, lang, file_patterns)
+      vim.notify('nvim-treesitter-locals: index rebuilt for ' .. root, vim.log.levels.INFO)
+    end, { desc = 'Rebuild cross-file symbol index' })
+
+    vim.api.nvim_create_user_command('TSLocalsIndexClear', function()
+      require('nvim-treesitter-locals.index').clear()
+      vim.notify('nvim-treesitter-locals: index cache cleared', vim.log.levels.INFO)
+    end, { desc = 'Clear cross-file symbol index cache' })
   end
 end
 
