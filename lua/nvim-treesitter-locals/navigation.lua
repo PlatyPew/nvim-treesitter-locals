@@ -149,16 +149,18 @@ function M.goto_definition(bufnr)
 
   -- Cross-file definitions
   local xref_results = {}
+  local xref_enabled = false
   local root, lang, file_patterns = resolve_xref_config(bufnr)
   if root then
+    xref_enabled = true
     local index = require('nvim-treesitter-locals.index')
     local current_file = vim.fn.resolve(api.nvim_buf_get_name(bufnr))
     index.ensure_index(root, lang, file_patterns)
     xref_results = index.lookup(root, node_text, current_file)
   end
 
-  -- Cross-file results exist: show picker with local + cross-file defs
-  if #xref_results > 0 then
+  -- When cross_file enabled, always show picker (local + cross-file defs)
+  if xref_enabled then
     local all_results = {} ---@type ExternalDefinition[]
 
     if kind then
@@ -176,11 +178,14 @@ function M.goto_definition(bufnr)
     end
 
     vim.list_extend(all_results, xref_results)
-    show_location_picker(all_results, 'Definition: ' .. node_text)
+
+    if #all_results > 0 then
+      show_location_picker(all_results, 'Definition: ' .. node_text)
+    end
     return
   end
 
-  -- No cross-file results: jump to local definition directly
+  -- cross_file not enabled: jump to local definition directly
   if kind then
     goto_node(def_node, bufnr)
   end
