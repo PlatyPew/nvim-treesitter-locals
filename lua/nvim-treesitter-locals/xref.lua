@@ -21,7 +21,7 @@ end
 ---@param lang string treesitter language
 ---@param symbol_name string
 ---@return ExternalDefinition[]
-local function parse_file_occurrences(filepath, lang, symbol_name)
+function M.parse_file_occurrences(filepath, lang, symbol_name)
   local lines = vim.fn.readfile(filepath)
   if not lines or #lines == 0 then
     return {}
@@ -123,7 +123,7 @@ function M.find_references(bufnr)
   local all_refs = {} ---@type ExternalDefinition[]
   for _, filepath in ipairs(candidate_files) do
     local resolved = vim.fn.resolve(filepath)
-    local refs = parse_file_occurrences(resolved, lang, symbol_name)
+    local refs = M.parse_file_occurrences(resolved, lang, symbol_name)
     vim.list_extend(all_refs, refs)
   end
 
