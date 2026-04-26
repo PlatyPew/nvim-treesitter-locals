@@ -6,10 +6,13 @@ CONTENTS                                      *nvim-treesitter-locals-contents*
   1. Introduction ........................ |nvim-treesitter-locals-introduction|
   2. Requirements ........................ |nvim-treesitter-locals-requirements|
   3. Installation ........................ |nvim-treesitter-locals-installation|
-  4. Highlight ........................... |nvim-treesitter-locals-highlight|
-  5. Navigation .......................... |nvim-treesitter-locals-navigation|
-  6. Rename .............................. |nvim-treesitter-locals-rename|
-  7. Highlight Groups .................... |nvim-treesitter-locals-hl-groups|
+  4. Setup ............................... |nvim-treesitter-locals-setup|
+  5. Highlight ........................... |nvim-treesitter-locals-highlight|
+  6. Navigation .......................... |nvim-treesitter-locals-navigation|
+  7. Cross-File References ............... |nvim-treesitter-locals-xref|
+  8. Rename .............................. |nvim-treesitter-locals-rename|
+  9. Commands ............................ |nvim-treesitter-locals-commands|
+  10. Highlight Groups ................... |nvim-treesitter-locals-hl-groups|
 
 ==============================================================================
 1. Introduction                           *nvim-treesitter-locals-introduction*
@@ -20,14 +23,17 @@ treesitter support.
 
 Features:
 - Highlight definitions and usages of the symbol under the cursor
-- Go to definition
-- Navigate between usages (next/previous)
+- Go to definition (LSP fallback with treesitter)
+- Navigate between usages (next/previous with wraparound)
 - Smart rename (all references in scope)
+- Cross-file goto definition, implementation, and references
 
 All features with LSP equivalents (goto definition, rename) will
 automatically use LSP when a capable server is attached, falling back to
 treesitter otherwise. Treesitter-only variants are also available if you
 prefer to bypass LSP.
+
+Cross-file features require snacks.nvim for the picker UI.
 
 No default keybinds are set. No setup function is required.
 
@@ -36,6 +42,8 @@ No default keybinds are set. No setup function is required.
 
 - Neovim >= 0.10
 - `locals.scm` query files for your language(s)
+- snacks.nvim (optional, for cross-file picker features)
+- ripgrep (optional, for faster cross-file reference search)
 
 Neovim ships `locals.scm` for some built-in languages. For additional
 languages, you can install query files from the nvim-treesitter queries
@@ -51,16 +59,69 @@ Query files should define these captures:
 
 Using lazy.nvim: >lua
   {
-    'nvim-treesitter/nvim-treesitter-locals',
+    'PlatyPew/nvim-treesitter-locals',
   }
 <
 
 Using vim-plug: >vim
-  Plug 'nvim-treesitter/nvim-treesitter-locals'
+  Plug 'PlatyPew/nvim-treesitter-locals'
 <
 
 ==============================================================================
-4. Highlight                                 *nvim-treesitter-locals-highlight*
+4. Setup                                       *nvim-treesitter-locals-setup*
+
+                                        *nvim-treesitter-locals.setup()*
+`require('nvim-treesitter-locals').setup({opts})`
+  Configure the plugin with the given options. All options are optional.
+
+Options: ~
+
+  `highlight_definitions`  (boolean, default: false)
+    Enable automatic highlighting of definitions/usages on CursorHold for
+    all treesitter buffers.
+
+  `keymaps`  (table, default: {})
+    Keybinding table. Set a key to a string to bind it, or `false` to
+    disable a default. Available keys:
+      `goto_definition`        Go to definition (LSP -> treesitter fallback)
+      `goto_definition_ts`     Go to definition (treesitter only)
+      `goto_next_usage`        Next usage (wraps around)
+      `goto_previous_usage`    Previous usage (wraps around)
+      `smart_rename`           Rename symbol (LSP -> treesitter fallback)
+      `smart_rename_ts`        Rename symbol (treesitter only)
+      `goto_implementation`    All usages across project (cross-file)
+      `find_references_xref`   Cross-file references
+
+  `cross_file`  (boolean|table, default: false)
+    Enable cross-file features. Set `true` to auto-detect file patterns
+    from the buffer language. Pass a table for more control:
+      `root_markers`   (string[])  Project root markers.
+                       Default: {".git", "Makefile", "compile_commands.json"}
+      `file_patterns`  (string[])  File patterns to scan.
+                       Default: auto-detect from language
+      `lang`           (string)    Treesitter language override.
+                       Default: auto-detect from filetype
+
+    Auto-detected languages: C, C++, Python, JavaScript, TypeScript, Lua,
+    Rust, Go, Java, Zig.
+
+Example: >lua
+  require('nvim-treesitter-locals').setup({
+    highlight_definitions = true,
+    keymaps = {
+      smart_rename = 'gnr',
+      goto_definition = 'gnd',
+      goto_next_usage = ']]',
+      goto_previous_usage = '[[',
+      goto_implementation = 'gni',
+      find_references_xref = 'gnR',
+    },
+    cross_file = true,
+  })
+<
+
+==============================================================================
+5. Highlight                                 *nvim-treesitter-locals-highlight*
 
 Highlight the definition and all usages of the symbol under the cursor.
 This feature is opt-in: you must explicitly enable it.
@@ -100,7 +161,7 @@ Example: Enable for all buffers with a treesitter parser: >lua
 <
 
 ==============================================================================
-5. Navigation                               *nvim-treesitter-locals-navigation*
+6. Navigation                               *nvim-treesitter-locals-navigation*
 
 Navigate to definitions and between usages of symbols.
 
@@ -110,11 +171,13 @@ Functions:
 `require('nvim-treesitter-locals.navigation').goto_definition({bufnr})`
   Go to the definition of the symbol under the cursor.
   Uses LSP `textDocument/definition` if a capable server is attached,
-  otherwise falls back to treesitter.
+  otherwise falls back to treesitter. When `cross_file` is enabled, shows
+  local and external definitions in a picker instead of jumping directly.
 
                         *nvim-treesitter-locals.navigation.goto_definition_ts()*
 `require('nvim-treesitter-locals.navigation').goto_definition_ts({bufnr})`
   Go to the definition using treesitter only (bypasses LSP).
+  Always operates on the local buffer.
 
                         *nvim-treesitter-locals.navigation.goto_next_usage()*
 `require('nvim-treesitter-locals.navigation').goto_next_usage({bufnr})`
@@ -126,15 +189,43 @@ Functions:
   Jump to the previous usage of the symbol under the cursor.
   Wraps around to the last usage before the first.
 
+                        *nvim-treesitter-locals.navigation.goto_implementation()*
+`require('nvim-treesitter-locals.navigation').goto_implementation({bufnr})`
+  Show all usages of the symbol under the cursor across the project.
+  Collects local buffer references and cross-file references via ripgrep
+  and treesitter. Results shown in a picker. Requires `cross_file` enabled
+  and snacks.nvim.
+
 Example keybinds: >lua
   local nav = require('nvim-treesitter-locals.navigation')
   vim.keymap.set('n', 'gd', nav.goto_definition, { desc = 'Go to definition' })
   vim.keymap.set('n', '<a-*>', nav.goto_next_usage, { desc = 'Next usage' })
   vim.keymap.set('n', '<a-#>', nav.goto_previous_usage, { desc = 'Previous usage' })
+  vim.keymap.set('n', 'gi', nav.goto_implementation, { desc = 'Go to implementation' })
 <
 
 ==============================================================================
-6. Rename                                       *nvim-treesitter-locals-rename*
+7. Cross-File References                         *nvim-treesitter-locals-xref*
+
+Find all cross-file references for the symbol under the cursor. Requires
+`cross_file` enabled and snacks.nvim for the picker UI. Uses ripgrep to
+narrow candidates, then treesitter to parse and verify matches.
+
+Functions:
+
+                        *nvim-treesitter-locals.xref.find_references()*
+`require('nvim-treesitter-locals.xref').find_references({bufnr})`
+  Find all cross-file references (definitions + usages) for the symbol
+  under the cursor. Results are sorted with definitions first, then by
+  file and position. Shown in a picker.
+
+Example keybind: >lua
+  local xref = require('nvim-treesitter-locals.xref')
+  vim.keymap.set('n', 'gR', xref.find_references, { desc = 'Cross-file references' })
+<
+
+==============================================================================
+8. Rename                                       *nvim-treesitter-locals-rename*
 
 Rename the symbol under the cursor and all its references within scope.
 
@@ -156,7 +247,26 @@ Example keybind: >lua
 <
 
 ==============================================================================
-7. Highlight Groups                           *nvim-treesitter-locals-hl-groups*
+9. Commands                                   *nvim-treesitter-locals-commands*
+
+These commands are available when `cross_file` is enabled in setup.
+
+                                                      *:TSLocalsIndexRebuild*
+`:TSLocalsIndexRebuild`
+  Rebuild the cross-file symbol index for the current buffer's project.
+  Forces a full re-parse of all project files.
+
+                                                        *:TSLocalsIndexClear*
+`:TSLocalsIndexClear`
+  Clear all cached cross-file symbol indexes (in-memory and on disk).
+
+The symbol index is built lazily on first use, cached in memory, and
+persisted to disk at `stdpath('cache')/nvim-treesitter-locals/`. It updates
+incrementally by checking file modification times — only modified or new
+files are re-parsed on subsequent uses.
+
+==============================================================================
+10. Highlight Groups                          *nvim-treesitter-locals-hl-groups*
 
 The following highlight groups are defined with default links. Override them
 in your colorscheme or config to customize appearance.
