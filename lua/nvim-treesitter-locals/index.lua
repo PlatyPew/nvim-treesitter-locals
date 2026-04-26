@@ -44,6 +44,29 @@ M.lang_patterns = {
   zig = { '*.zig' },
 }
 
+--- Resolve cross-file config into root, lang, and file_patterns.
+---@param bufnr integer
+---@return string? root
+---@return string? lang
+---@return string[]? file_patterns
+function M.resolve_xref_config(bufnr)
+  local config = require('nvim-treesitter-locals').get_config()
+  if not config.cross_file then
+    return nil, nil, nil
+  end
+
+  local opts = type(config.cross_file) == 'table' and config.cross_file or {}
+  local ft = vim.bo[bufnr].filetype
+  local lang = opts.lang or ts.language.get_lang(ft) or ft
+  local file_patterns = opts.file_patterns or M.lang_patterns[lang]
+  if not file_patterns then
+    return nil, nil, nil
+  end
+
+  local root = project.find_root(bufnr, opts.root_markers)
+  return root, lang, file_patterns
+end
+
 --- In-memory index cache, keyed by project root.
 ---@type table<string, ProjectIndex>
 local indexes = {}

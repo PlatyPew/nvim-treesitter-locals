@@ -9,13 +9,41 @@ local M = {}
 ---@param method string
 ---@return boolean
 local function lsp_supports(bufnr, method)
-  local clients = vim.lsp.get_clients({ bufnr = bufnr })
-  for _, client in ipairs(clients) do
+  for _, client in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do
     if client:supports_method(method, bufnr) then
       return true
     end
   end
   return false
+end
+
+--- Try LSP goto-definition. Returns true if LSP handled it.
+---@param bufnr integer
+---@return boolean
+local function try_lsp_definition(bufnr)
+  if not lsp_supports(bufnr, 'textDocument/definition') then
+    return false
+  end
+  local params = vim.lsp.util.make_position_params()
+  local results = vim.lsp.buf_request_sync(bufnr, 'textDocument/definition', params, 1000)
+  if not results then
+    return false
+  end
+  for _, res in pairs(results) do
+    if res.result and not vim.tbl_isempty(res.result) then
+      vim.lsp.buf.definition()
+      return true
+    end
+  end
+  return false
+end
+
+--- Check if a definition kind represents a file-scope symbol
+--- (functions, macros, types whose usages may span the whole file).
+---@param kind string
+---@return boolean
+local function is_file_scope_kind(kind)
+  return kind:match('%.function$') or kind:match('%.macro$') or kind:match('%.type$')
 end
 
 --- Jump cursor to a treesitter node's start position.
@@ -68,33 +96,6 @@ local function show_location_picker(results, title)
   })
 end
 
---- Resolve cross-file config into root, lang, file_patterns for the index.
----@param bufnr integer
----@return string? root
----@return string? lang
----@return string[]? file_patterns
-local function resolve_xref_config(bufnr)
-  local config = require('nvim-treesitter-locals').get_config()
-  if not config.cross_file then
-    return nil, nil, nil
-  end
-
-  local opts = type(config.cross_file) == 'table' and config.cross_file or {}
-  local ft = vim.bo[bufnr].filetype
-  local lang = opts.lang or ts.language.get_lang(ft) or ft
-
-  local index = require('nvim-treesitter-locals.index')
-  local file_patterns = opts.file_patterns or index.lang_patterns[lang]
-  if not file_patterns then
-    return nil, nil, nil
-  end
-
-  local project = require('nvim-treesitter-locals.project')
-  local root = project.find_root(bufnr, opts.root_markers)
-
-  return root, lang, file_patterns
-end
-
 --- Go to the definition of the symbol under the cursor (treesitter only, local buffer).
 ---@param bufnr? integer
 function M.goto_definition_ts(bufnr)
@@ -115,23 +116,13 @@ end
 
 --- Go to the definition of the symbol under the cursor.
 --- Uses LSP if available and returns results, falls back to treesitter.
---- When cross_file is enabled, collects both local and cross-file definitions
---- and shows them in a Snacks.picker. Otherwise, jumps directly to the local definition.
+--- When cross_file is enabled, shows definitions in Snacks.picker.
 ---@param bufnr? integer
 function M.goto_definition(bufnr)
   bufnr = bufnr or api.nvim_get_current_buf()
 
-  if lsp_supports(bufnr, 'textDocument/definition') then
-    local params = vim.lsp.util.make_position_params()
-    local lsp_results = vim.lsp.buf_request_sync(bufnr, 'textDocument/definition', params, 1000)
-    if lsp_results then
-      for _, res in pairs(lsp_results) do
-        if res.result and not vim.tbl_isempty(res.result) then
-          vim.lsp.buf.definition()
-          return
-        end
-      end
-    end
+  if try_lsp_definition(bufnr) then
+    return
   end
 
   local node = ts.get_node()
@@ -144,28 +135,17 @@ function M.goto_definition(bufnr)
     return
   end
 
-  -- Local definition
   local def_node, _, kind = locals.find_definition(node, bufnr)
 
-  -- Cross-file definitions
-  local xref_results = {}
-  local xref_enabled = false
-  local root, lang, file_patterns = resolve_xref_config(bufnr)
+  -- Cross-file: show picker with local + external definitions
+  local index = require('nvim-treesitter-locals.index')
+  local root, lang, file_patterns = index.resolve_xref_config(bufnr)
   if root then
-    xref_enabled = true
-    local index = require('nvim-treesitter-locals.index')
     local current_file = vim.fn.resolve(api.nvim_buf_get_name(bufnr))
-    index.ensure_index(root, lang, file_patterns)
-    xref_results = index.lookup(root, node_text, current_file)
-  end
-
-  -- When cross_file enabled, always show picker (local + cross-file defs)
-  if xref_enabled then
     local all_results = {} ---@type ExternalDefinition[]
 
     if kind then
       local sr, sc, er, ec = def_node:range()
-      local current_file = vim.fn.resolve(api.nvim_buf_get_name(bufnr))
       all_results[#all_results + 1] = {
         name = node_text,
         kind = kind,
@@ -177,7 +157,8 @@ function M.goto_definition(bufnr)
       }
     end
 
-    vim.list_extend(all_results, xref_results)
+    index.ensure_index(root, lang, file_patterns)
+    vim.list_extend(all_results, index.lookup(root, node_text, current_file))
 
     if #all_results > 0 then
       show_location_picker(all_results, 'Definition: ' .. node_text)
@@ -185,7 +166,7 @@ function M.goto_definition(bufnr)
     return
   end
 
-  -- cross_file not enabled: jump to local definition directly
+  -- No cross-file: jump to local definition directly
   if kind then
     goto_node(def_node, bufnr)
   end
@@ -193,7 +174,6 @@ end
 
 --- Show all usages of symbol under cursor across the project.
 --- Collects local buffer references + cross-file references via ripgrep + treesitter.
---- Always shows Snacks.picker.
 ---@param bufnr? integer
 function M.goto_implementation(bufnr)
   bufnr = bufnr or api.nvim_get_current_buf()
@@ -208,29 +188,25 @@ function M.goto_implementation(bufnr)
     return
   end
 
-  local all_results = {} ---@type ExternalDefinition[]
   local current_file = vim.fn.resolve(api.nvim_buf_get_name(bufnr))
-
+  local all_results = {} ---@type ExternalDefinition[]
   local seen = {} ---@type table<string, boolean>
+
   local function seen_key(file, row, col)
     return file .. ':' .. row .. ':' .. col
   end
 
-  -- Local buffer: usages only (no definition) from treesitter
+  -- Local buffer: collect usages (excluding the definition itself)
   local def_node, scope, kind = locals.find_definition(node, bufnr)
   if kind then
-    -- Widen scope to file root for file-scope symbols
-    if kind:match('%.function$') or kind:match('%.macro$') or kind:match('%.type$') then
+    if is_file_scope_kind(kind) then
       scope = node:tree():root()
     end
 
-    -- Track definition position to exclude from usages
     local dr, dc = def_node:range()
     seen[seen_key(current_file, dr, dc)] = true
 
-    -- Add local usages
-    local usages = locals.find_usages(def_node, scope, bufnr)
-    for _, usage in ipairs(usages) do
+    for _, usage in ipairs(locals.find_usages(def_node, scope, bufnr)) do
       local ur, uc, uer, uec = usage:range()
       local key = seen_key(current_file, ur, uc)
       if not seen[key] then
@@ -249,19 +225,17 @@ function M.goto_implementation(bufnr)
   end
 
   -- Cross-file: ripgrep candidates, then treesitter parse for references only
-  local root, lang, file_patterns = resolve_xref_config(bufnr)
+  local index = require('nvim-treesitter-locals.index')
+  local root, lang, file_patterns = index.resolve_xref_config(bufnr)
   if root then
     local project = require('nvim-treesitter-locals.project')
     local xref = require('nvim-treesitter-locals.xref')
-    local candidate_files = project.grep_files(root, node_text, file_patterns)
-    for _, filepath in ipairs(candidate_files) do
+    for _, filepath in ipairs(project.grep_files(root, node_text, file_patterns)) do
       local resolved = vim.fn.resolve(filepath)
       if resolved ~= current_file then
-        local refs = xref.parse_file_occurrences(resolved, lang, node_text)
-        for _, ref in ipairs(refs) do
-          -- Only references, skip definitions
+        for _, ref in ipairs(xref.parse_file_occurrences(resolved, lang, node_text)) do
           if ref.kind == 'local.reference' then
-            vim.list_extend(all_results, { ref })
+            all_results[#all_results + 1] = ref
           end
         end
       end
@@ -290,27 +264,19 @@ local function get_usage_list(bufnr)
     return
   end
 
-  -- For file-scope definitions (functions, macros, types), widen the search
-  -- scope to the file root so usages across all functions are found.
-  -- Without this, cursor on a function definition only finds usages within
-  -- that function's own scope, missing call sites in other functions.
-  if kind:match('%.function$') or kind:match('%.macro$') or kind:match('%.type$') then
+  if is_file_scope_kind(kind) then
     scope = node:tree():root()
   end
 
   local usages = locals.find_usages(def_node, scope, bufnr)
 
   -- Build combined list: definition + usages, deduplicated
-  local nodes = {} ---@type TSNode[]
-  local seen = {} ---@type table<any, boolean>
-
-  -- Add definition first
-  table.insert(nodes, def_node)
-  seen[def_node:id()] = true
+  local nodes = { def_node } ---@type TSNode[]
+  local seen = { [def_node:id()] = true } ---@type table<any, boolean>
 
   for _, usage in ipairs(usages) do
     if not seen[usage:id()] then
-      table.insert(nodes, usage)
+      nodes[#nodes + 1] = usage
       seen[usage:id()] = true
     end
   end
@@ -351,8 +317,7 @@ function M.goto_next_usage(bufnr)
     return
   end
 
-  local next_idx = current_idx % #nodes + 1
-  goto_node(nodes[next_idx], bufnr)
+  goto_node(nodes[current_idx % #nodes + 1], bufnr)
 end
 
 --- Go to the previous usage of the symbol under the cursor (with wraparound).
@@ -365,8 +330,7 @@ function M.goto_previous_usage(bufnr)
     return
   end
 
-  local prev_idx = (current_idx - 2) % #nodes + 1
-  goto_node(nodes[prev_idx], bufnr)
+  goto_node(nodes[(current_idx - 2) % #nodes + 1], bufnr)
 end
 
 return M

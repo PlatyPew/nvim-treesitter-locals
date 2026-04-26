@@ -38,7 +38,6 @@ function M.parse_file_occurrences(filepath, lang, symbol_name)
   if not tree then
     return {}
   end
-  local root = tree:root()
 
   local query = ts.query.get(lang, 'locals')
   if not query then
@@ -46,7 +45,7 @@ function M.parse_file_occurrences(filepath, lang, symbol_name)
   end
 
   local results = {} ---@type ExternalDefinition[]
-  for id, node in query:iter_captures(root, content) do
+  for id, node in query:iter_captures(tree:root(), content) do
     local kind = query.captures[id]
     if kind == 'local.reference' or vim.startswith(kind, 'local.definition') then
       local name = ts.get_node_text(node, content)
@@ -68,31 +67,61 @@ function M.parse_file_occurrences(filepath, lang, symbol_name)
   return results
 end
 
---- Resolve cross-file config into root, lang, file_patterns.
----@param bufnr integer
----@return string? root
----@return string? lang
----@return string[]? file_patterns
-local function resolve_xref_config(bufnr)
-  local config = require('nvim-treesitter-locals').get_config()
-  if not config.cross_file then
-    return nil, nil, nil
-  end
-
-  local opts = type(config.cross_file) == 'table' and config.cross_file or {}
-  local ft = vim.bo[bufnr].filetype
-  local lang = opts.lang or ts.language.get_lang(ft) or ft
-
-  local index = require('nvim-treesitter-locals.index')
-  local file_patterns = opts.file_patterns or index.lang_patterns[lang]
-  if not file_patterns then
-    return nil, nil, nil
-  end
-
+--- Collect all cross-file references for a symbol using ripgrep + treesitter.
+---@param root string project root
+---@param lang string treesitter language
+---@param file_patterns string[] glob patterns
+---@param symbol_name string
+---@return ExternalDefinition[]
+local function collect_references(root, lang, file_patterns, symbol_name)
   local project = require('nvim-treesitter-locals.project')
-  local root = project.find_root(bufnr, opts.root_markers)
+  local all_refs = {} ---@type ExternalDefinition[]
+  for _, filepath in ipairs(project.grep_files(root, symbol_name, file_patterns)) do
+    vim.list_extend(all_refs, M.parse_file_occurrences(vim.fn.resolve(filepath), lang, symbol_name))
+  end
+  return all_refs
+end
 
-  return root, lang, file_patterns
+--- Sort references: definitions first, then by file and position.
+---@param refs ExternalDefinition[]
+local function sort_references(refs)
+  table.sort(refs, function(a, b)
+    local a_def = vim.startswith(a.kind, 'local.definition') and 0 or 1
+    local b_def = vim.startswith(b.kind, 'local.definition') and 0 or 1
+    if a_def ~= b_def then
+      return a_def < b_def
+    end
+    if a.file ~= b.file then
+      return a.file < b.file
+    end
+    if a.row ~= b.row then
+      return a.row < b.row
+    end
+    return a.col < b.col
+  end)
+end
+
+--- Build Snacks.picker items from reference results.
+---@param refs ExternalDefinition[]
+---@return snacks.picker.finder.Item[]
+local function build_picker_items(refs)
+  local items = {} ---@type snacks.picker.finder.Item[]
+  for _, r in ipairs(refs) do
+    local line_text = read_line(r.file, r.row + 1)
+    local short_kind = r.kind:gsub('local%.definition%.?', ''):gsub('local%.reference', 'ref')
+    if short_kind == '' then
+      short_kind = 'def'
+    end
+    items[#items + 1] = {
+      text = r.name .. ' ' .. r.file,
+      file = r.file,
+      pos = { r.row + 1, r.col },
+      end_pos = { r.end_row + 1, r.end_col },
+      line = line_text and vim.trim(line_text) or '',
+      label = short_kind,
+    }
+  end
+  return items
 end
 
 --- Find all cross-file references for the symbol under cursor.
@@ -110,65 +139,24 @@ function M.find_references(bufnr)
     return
   end
 
-  local root, lang, file_patterns = resolve_xref_config(bufnr)
+  local index = require('nvim-treesitter-locals.index')
+  local root, lang, file_patterns = index.resolve_xref_config(bufnr)
   if not root then
     vim.notify('nvim-treesitter-locals: cross_file not configured', vim.log.levels.INFO)
     return
   end
 
-  -- Use ripgrep to narrow candidates, then parse for treesitter captures
-  local project = require('nvim-treesitter-locals.project')
-  local candidate_files = project.grep_files(root, symbol_name, file_patterns)
-
-  local all_refs = {} ---@type ExternalDefinition[]
-  for _, filepath in ipairs(candidate_files) do
-    local resolved = vim.fn.resolve(filepath)
-    local refs = M.parse_file_occurrences(resolved, lang, symbol_name)
-    vim.list_extend(all_refs, refs)
-  end
-
+  local all_refs = collect_references(root, lang, file_patterns, symbol_name)
   if #all_refs == 0 then
     vim.notify('nvim-treesitter-locals: no cross-file references found', vim.log.levels.INFO)
     return
   end
 
-  -- Sort: definitions first, then by file, then by position
-  table.sort(all_refs, function(a, b)
-    local a_def = vim.startswith(a.kind, 'local.definition') and 0 or 1
-    local b_def = vim.startswith(b.kind, 'local.definition') and 0 or 1
-    if a_def ~= b_def then
-      return a_def < b_def
-    end
-    if a.file ~= b.file then
-      return a.file < b.file
-    end
-    if a.row ~= b.row then
-      return a.row < b.row
-    end
-    return a.col < b.col
-  end)
-
-  -- Build Snacks.picker items
-  local items = {} ---@type snacks.picker.finder.Item[]
-  for _, r in ipairs(all_refs) do
-    local line_text = read_line(r.file, r.row + 1)
-    local short_kind = r.kind:gsub('local%.definition%.?', ''):gsub('local%.reference', 'ref')
-    if short_kind == '' then
-      short_kind = 'def'
-    end
-    items[#items + 1] = {
-      text = r.name .. ' ' .. r.file,
-      file = r.file,
-      pos = { r.row + 1, r.col },
-      end_pos = { r.end_row + 1, r.end_col },
-      line = line_text and vim.trim(line_text) or '',
-      label = short_kind,
-    }
-  end
+  sort_references(all_refs)
 
   Snacks.picker({
     title = 'References: ' .. symbol_name,
-    items = items,
+    items = build_picker_items(all_refs),
     format = 'file',
     preview = 'file',
   })

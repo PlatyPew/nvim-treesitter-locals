@@ -113,28 +113,12 @@ local function memoize(fn, hash_fn)
   return function(...)
     local key = hash_fn(...)
     if cache[key] == nil then
-      local v = { fn(...) } ---@type any[]
-
-      for k, value in pairs(v) do
-        if value == nil then
-          value[k] = vim.NIL ---@type table
-        end
-      end
-
-      cache[key] = v
+      cache[key] = { fn(...) }
     end
-
-    local v = cache[key]
-
-    for k, value in ipairs(v) do
-      if value == vim.NIL then
-        value[k] = nil ---@type table
-      end
-    end
-
-    return unpack(v)
+    return unpack(cache[key])
   end
 end
+
 ---@param bufnr integer: the buffer
 ---@return TSNode|nil root: root node of the buffer
 local function get_root(bufnr)
@@ -148,7 +132,7 @@ end
 
 ---@param bufnr integer: the buffer
 ---@return vim.treesitter.Query|nil query: `locals` query
----@return TSNode|nil root: root node of the bufferocal function get_query(bufnr)
+---@return TSNode|nil root: root node of the buffer
 local function get_query(bufnr)
   local root = get_root(bufnr)
 
