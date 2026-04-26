@@ -4,27 +4,29 @@ local locals = require('nvim-treesitter-locals.locals')
 
 local M = {}
 
---- Check if any attached LSP client supports a given method.
+--- Find the first attached LSP client that supports a given method.
 ---@param bufnr integer
 ---@param method string
----@return boolean
-local function lsp_supports(bufnr, method)
+---@return vim.lsp.Client?
+local function lsp_get_client(bufnr, method)
   for _, client in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do
     if client:supports_method(method, bufnr) then
-      return true
+      return client
     end
   end
-  return false
+  return nil
 end
 
 --- Try LSP goto-definition. Returns true if LSP handled it.
 ---@param bufnr integer
 ---@return boolean
 local function try_lsp_definition(bufnr)
-  if not lsp_supports(bufnr, 'textDocument/definition') then
+  local client = lsp_get_client(bufnr, 'textDocument/definition')
+  if not client then
     return false
   end
-  local params = vim.lsp.util.make_position_params()
+  local win = api.nvim_get_current_win()
+  local params = vim.lsp.util.make_position_params(win, client.offset_encoding)
   local results = vim.lsp.buf_request_sync(bufnr, 'textDocument/definition', params, 1000)
   if not results then
     return false

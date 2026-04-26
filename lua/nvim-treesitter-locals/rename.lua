@@ -9,8 +9,7 @@ local M = {}
 ---@param method string
 ---@return boolean
 local function lsp_supports(bufnr, method)
-  local clients = vim.lsp.get_clients({ bufnr = bufnr })
-  for _, client in ipairs(clients) do
+  for _, client in ipairs(vim.lsp.get_clients({ bufnr = bufnr })) do
     if client:supports_method(method, bufnr) then
       return true
     end
